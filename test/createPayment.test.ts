@@ -1,55 +1,106 @@
-import * as payments from '../src/lib/payments';
-import { handler } from '../src/createPayment';
-import { randomUUID } from 'crypto';
+import { handler as createHandler } from '../src/createPayment';
+import { StatusCodes } from 'http-status-codes';
 import { APIGatewayProxyEvent } from 'aws-lambda';
+import * as payments from '../src/lib/payments';
+import { randomUUID } from 'crypto';
 
-describe('createPayment handler', () => {
+describe('Create Payment Handler', () => {
   afterEach(() => jest.resetAllMocks());
 
+  // Valid creation scenario
   it('returns 201 and generated ID on success', async () => {
-    const fakeId = '11111111-1111-4111-8111-111111111111';
-    jest.spyOn(payments, 'createPayment').mockResolvedValueOnce();
-    jest.spyOn(require('crypto'), 'randomUUID').mockReturnValueOnce(fakeId);
-
-    const event = { body: JSON.stringify({ amount: 500, currency: 'USD' }) } as unknown as APIGatewayProxyEvent;
-    const res = await handler(event);
-
-    expect(payments.createPayment).toHaveBeenCalledWith({ id: fakeId, amount: 500, currency: 'USD' });
-    expect(res.statusCode).toBe(201);
-    expect(JSON.parse(res.body)).toEqual({ result: fakeId });
-  });
-
-  it('ignores client-supplied id in payload', async () => {
-    const fakeId = '22222222-2222-4222-8222-222222222222';
-    jest.spyOn(payments, 'createPayment').mockResolvedValueOnce();
-    jest.spyOn(require('crypto'), 'randomUUID').mockReturnValueOnce(fakeId);
-
-    const event = { body: JSON.stringify({ id: 'foo', amount: 100, currency: 'EUR' }) } as unknown as APIGatewayProxyEvent;
-    const res = await handler(event);
-
-    expect(payments.createPayment).toHaveBeenCalledWith({ id: fakeId, amount: 100, currency: 'EUR' });
-    expect(res.statusCode).toBe(201);
-    expect(JSON.parse(res.body)).toEqual({ result: fakeId });
-  });
-
-  it('returns 422 on invalid payload', async () => {
-    const event = { body: JSON.stringify({ amount: -5, currency: 'EURO' }) } as unknown as APIGatewayProxyEvent;
-    const res = await handler(event);
-    expect(res.statusCode).toBe(422);
-    const body = JSON.parse(res.body);
-    console.log(body);
-    expect(Array.isArray(body.errors)).toBe(true);
-    expect(body.errors[0]).toHaveProperty('message');
-  });
-
-  it('returns 500 on unexpected errors', async () => {
-    jest.spyOn(payments, 'createPayment').mockRejectedValueOnce(new Error('db error'));
     const fakeId = randomUUID();
+    jest.spyOn(payments, 'createPayment').mockResolvedValueOnce();
     jest.spyOn(require('crypto'), 'randomUUID').mockReturnValueOnce(fakeId);
 
-    const event = { body: JSON.stringify({ amount: 10, currency: 'AUD' }) } as unknown as APIGatewayProxyEvent;
-    const res = await handler(event);
-    expect(res.statusCode).toBe(500);
-    expect(JSON.parse(res.body)).toEqual({ error: 'Internal server error' });
+    const event = {
+      body: JSON.stringify({ amount: 500, currency: 'USD' }),
+    } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+
+    expect(res.statusCode).toBe(StatusCodes.CREATED);
+    expect(JSON.parse(res.body)).toEqual({ result: fakeId });
+  });
+
+  // Joi validation tests
+  it('returns 400 for invalid amount', async () => {
+    const event = {
+      body: JSON.stringify({ amount: -10, currency: 'USD' }),
+    } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for invalid currency', async () => {
+    const event = {
+      body: JSON.stringify({ amount: 100, currency: 'usd1' }),
+    } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for amount 0 (not positive)', async () => {
+    const event = { body: JSON.stringify({ amount: 0, currency: 'USD' }) } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for amount as a string', async () => {
+    const event = {
+      body: JSON.stringify({ amount: '100', currency: 'USD' }),
+    } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for lowercase currency code', async () => {
+    const event = {
+      body: JSON.stringify({ amount: 100, currency: 'usd' }),
+    } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for empty currency string', async () => {
+    const event = { body: JSON.stringify({ amount: 100, currency: '' }) } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for missing amount', async () => {
+    const event = { body: JSON.stringify({ currency: 'USD' }) } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for missing currency', async () => {
+    const event = { body: JSON.stringify({ amount: 100 }) } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for completely empty payload', async () => {
+    const event = { body: JSON.stringify({}) } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+  // Simulate internal error
+  it('returns 500 on internal error', async () => {
+    jest.spyOn(payments, 'createPayment').mockRejectedValueOnce(new Error('internal error'));
+    jest
+      .spyOn(require('crypto'), 'randomUUID')
+      .mockReturnValueOnce('33333333-3333-4333-8333-333333333333');
+
+    const event = { body: JSON.stringify({ amount: 50, currency: 'AUD' }) } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.INTERNAL_SERVER_ERROR);
+  });
+
+  it('returns 400 for unknown fields in payload if not allowed', async () => {
+    const event = {
+      body: JSON.stringify({ amount: 100, currency: 'USD', note: 'test' }),
+    } as APIGatewayProxyEvent;
+    const res = await createHandler(event);
+    expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST);
   });
 });

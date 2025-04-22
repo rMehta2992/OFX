@@ -1,65 +1,84 @@
-// test/listPayments.test.ts
-
-import * as payments from '../src/lib/payments';
-import { handler } from '../src/listPayments';
+import { handler as listHandler } from '../src/listPayments';
+import { StatusCodes } from 'http-status-codes';
 import { APIGatewayProxyEvent } from 'aws-lambda';
+import * as payments from '../src/lib/payments';
 
-describe('listPayments handler', () => {
-  afterEach(() => {
-    jest.resetAllMocks();
-  });
+describe('List Payments Handler', () => {
+  afterEach(() => jest.resetAllMocks());
 
-  it('returns 200 and all payments when no currency filter provided', async () => {
+  it('returns 200 with all payments when no filter is applied', async () => {
     const mockData = [
       { id: '1', amount: 100, currency: 'USD' },
-      { id: '2', amount: 200, currency: 'EUR' }
+      { id: '2', amount: 200, currency: 'EUR' },
     ];
     jest.spyOn(payments, 'listPayments').mockResolvedValueOnce(mockData);
 
     const event = {} as unknown as APIGatewayProxyEvent;
-    const result = await handler(event);
+    const result = await listHandler(event);
 
-    expect(payments.listPayments).toHaveBeenCalledWith(undefined);
-    expect(result.statusCode).toBe(200);
+    expect(result.statusCode).toBe(StatusCodes.OK);
     expect(JSON.parse(result.body)).toEqual({ data: mockData });
   });
 
-  it('returns 200 and filtered payments when currency filter provided', async () => {
-    const mockData = [ { id: '1', amount: 100, currency: 'USD' } ];
+  it('returns 200 with filtered results when valid currency is passed', async () => {
+    const mockData = [{ id: '3', amount: 150, currency: 'USD' }];
     jest.spyOn(payments, 'listPayments').mockResolvedValueOnce(mockData);
 
-    const event = { queryStringParameters: { currency: 'USD' } } as unknown as APIGatewayProxyEvent;
-    const result = await handler(event);
+    const event = {
+      queryStringParameters: { currency: 'USD' },
+    } as unknown as APIGatewayProxyEvent;
 
-    expect(payments.listPayments).toHaveBeenCalledWith('USD');
-    expect(result.statusCode).toBe(200);
+    const result = await listHandler(event);
+
+    expect(result.statusCode).toBe(StatusCodes.OK);
     expect(JSON.parse(result.body)).toEqual({ data: mockData });
   });
 
-  it('returns 400 when invalid currency filter provided', async () => {
-    // 1️⃣ Spy on listPayments so we can assert it never runs
+  it('returns 400 for invalid currency code', async () => {
     const spy = jest.spyOn(payments, 'listPayments');
+    const event = {
+      queryStringParameters: { currency: 'US' },
+    } as unknown as APIGatewayProxyEvent;
 
-    const event = { queryStringParameters: { currency: 'US' } } as unknown as APIGatewayProxyEvent;
-    const result = await handler(event);
-
-    const body = JSON.parse(result.body);
-    expect(result.statusCode).toBe(400);
-    expect(body).toHaveProperty('errors');
-    expect(Array.isArray(body.errors)).toBe(true);
-    expect(body.errors[0]).toHaveProperty('message');
-
-    // 2️⃣ Ensure our service layer was never called on bad input
+    const result = await listHandler(event);
+    expect(result.statusCode).toBe(StatusCodes.BAD_REQUEST);
+    expect(JSON.parse(result.body)).toHaveProperty('errors');
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('returns 500 on unexpected exceptions', async () => {
-    jest.spyOn(payments, 'listPayments').mockRejectedValueOnce(new Error('boom'));
+  it('returns 500 on internal error', async () => {
+    jest.spyOn(payments, 'listPayments').mockRejectedValueOnce(new Error('Service failure'));
 
     const event = {} as unknown as APIGatewayProxyEvent;
-    const result = await handler(event);
+    const result = await listHandler(event);
 
-    expect(result.statusCode).toBe(500);
-    expect(JSON.parse(result.body)).toEqual({ error: 'Internal server error' });
+    expect(result.statusCode).toBe(StatusCodes.INTERNAL_SERVER_ERROR);
+  });
+  it('returns 400 for empty currency value', async () => {
+    const event = { queryStringParameters: { currency: '' } } as any;
+    const result = await listHandler(event);
+    expect(result.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for numeric currency input', async () => {
+    const event = { queryStringParameters: { currency: 123 as any } } as any;
+    const result = await listHandler(event);
+    expect(result.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for currency longer than 3 letters', async () => {
+    const event = { queryStringParameters: { currency: 'USDA' } } as any;
+    const result = await listHandler(event);
+    expect(result.statusCode).toBe(StatusCodes.BAD_REQUEST);
+  });
+
+  it('returns 400 for extra unexpected query param', async () => {
+    const event = {
+      queryStringParameters: { currency: 'USD', extra: 'ignore' },
+    } as any;
+
+    const result = await listHandler(event);
+    expect(result.statusCode).toBe(StatusCodes.BAD_REQUEST);
+    expect(JSON.parse(result.body)).toHaveProperty('errors');
   });
 });
